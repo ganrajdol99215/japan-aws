@@ -1,0 +1,269 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  W2P Japan - Network Stack
+  Creates a private subnet, private route table, and an optional NAT Gateway
+  within an existing VPC. Existing production resources are referenced only
+  and are never modified.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Existing Network Configuration
+        Parameters:
+          - ExistingVpcId
+          - ExistingPublicSubnetId
+          - AvailabilityZone
+          - VpcCidr
+
+      - Label:
+          default: Private Network Configuration
+        Parameters:
+          - PrivateSubnetCidr
+          - EnableNatGateway
+
+    ParameterLabels:
+      ExistingVpcId:
+        default: Existing VPC
+
+      ExistingPublicSubnetId:
+        default: Existing Public Subnet
+
+      AvailabilityZone:
+        default: Availability Zone
+
+      VpcCidr:
+        default: Existing VPC CIDR
+
+      PrivateSubnetCidr:
+        default: Private Subnet CIDR
+
+      EnableNatGateway:
+        default: Create NAT Gateway
+
+Parameters:
+
+  ExistingVpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC ID where the resources will be created.
+
+  ExistingPublicSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing public subnet where the NAT Gateway will be deployed.
+
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: Availability Zone for the new private subnet.
+
+  VpcCidr:
+    Type: String
+    Description: CIDR block of the existing VPC. Used only for the EC2 security group rule.
+
+  PrivateSubnetCidr:
+    Type: String
+    Description: CIDR block for the new private subnet.
+
+  EnableNatGateway:
+    Type: String
+    Default: "false"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: >
+      Set to true to create the NAT Gateway, Elastic IP, and default route.
+      Set to false to remove them.
+  ProjectName:
+    Type: String
+    Description: Project name used for resource tagging.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+    Description: Deployment environment.
+
+  Owner:
+    Type: String
+    Description: Resource owner.
+Conditions:
+
+  CreateNatGateway: !Equals
+    - !Ref EnableNatGateway
+    - "true"
+Resources:
+
+  ##############################################
+  # Private Subnet
+  ##############################################
+
+  PrivateSubnet:
+
+    Type: AWS::EC2::Subnet
+
+    Properties:
+
+      VpcId: !Ref ExistingVpcId
+
+      AvailabilityZone: !Ref AvailabilityZone
+
+      CidrBlock: !Ref PrivateSubnetCidr
+
+      MapPublicIpOnLaunch: false
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-PrivateSubnet"
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  ##############################################
+  # Private Route Table
+  ##############################################
+
+  PrivateRouteTable:
+
+    Type: AWS::EC2::RouteTable
+
+    Properties:
+
+      VpcId: !Ref ExistingVpcId
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-PrivateRouteTable"
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  ##############################################
+  # Route Table Association
+  ##############################################
+
+  PrivateSubnetAssociation:
+
+    Type: AWS::EC2::SubnetRouteTableAssociation
+
+    Properties:
+
+      RouteTableId: !Ref PrivateRouteTable
+
+      SubnetId: !Ref PrivateSubnet
+  ##############################################
+  # Elastic IP (Conditional)
+  ##############################################
+
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateNatGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-NatEIP"
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  ##############################################
+  # NAT Gateway (Conditional)
+  ##############################################
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      ConnectivityType: public
+      SubnetId: !Ref ExistingPublicSubnetId
+
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-NatGateway"
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  ##############################################
+  # Default Route (Conditional)
+  ##############################################
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateNatGateway
+
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+Outputs:
+
+  PrivateSubnetId:
+    Description: Private Subnet ID
+    Value: !Ref PrivateSubnet
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetId"
+
+  PrivateRouteTableId:
+    Description: Private Route Table ID
+    Value: !Ref PrivateRouteTable
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateRouteTableId"
+
+  NatGatewayId:
+    Condition: CreateNatGateway
+    Description: NAT Gateway ID
+    Value: !Ref NatGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-NatGatewayId"
+  VpcId:
+    Description: Existing VPC ID
+    Value: !Ref ExistingVpcId
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  VpcCidr:
+    Description: Existing VPC CIDR (provided for downstream security group rules)
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcCidr"

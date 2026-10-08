@@ -1,0 +1,169 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  Personal W2P Japan Lab - WAF Stack.
+  Creates a WAFv2 Web ACL (Scope=CLOUDFRONT) with 5 AWS managed rule groups
+  suitable for a Linux-based web workload. This stack is intentionally
+  standalone - it does NOT associate itself with the CloudFront distribution
+  via CloudFormation Export/Import. The resulting Web ACL ARN is only an
+  Output; you attach it to the CloudFront stack manually (WebAclArn
+  parameter) as a separate update. This means deleting this WAF stack can
+  NEVER cascade into or block deletion of the CloudFront distribution.
+
+  IMPORTANT: WAFv2 Web ACLs with Scope=CLOUDFRONT must be created in the
+  us-east-1 region, regardless of which region CloudFront's origin lives in.
+  Deploy this stack with --region us-east-1.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Tags
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+
+Parameters:
+
+  ProjectName:
+    Type: String
+    Description: Project name used for resource tagging.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+    Description: Deployment environment.
+
+  Owner:
+    Type: String
+    Description: Resource owner.
+
+Resources:
+
+  ##############################################
+  # Web ACL (CLOUDFRONT scope)
+  ##############################################
+
+  WebACL:
+
+    Type: AWS::WAFv2::WebACL
+
+    Properties:
+
+      Name: !Sub "${ProjectName}-${Environment}-cloudfront-waf"
+
+      Description: !Sub "Web ACL for ${ProjectName} ${Environment} CloudFront distribution"
+
+      Scope: CLOUDFRONT
+
+      DefaultAction:
+        Allow: {}
+
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${ProjectName}${Environment}WebACL"
+
+      Rules:
+
+        - Name: AWS-AWSManagedRulesCommonRuleSet
+          Priority: 0
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${ProjectName}${Environment}CommonRuleSet"
+
+        - Name: AWS-AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${ProjectName}${Environment}KnownBadInputs"
+
+        - Name: AWS-AWSManagedRulesLinuxRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesLinuxRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${ProjectName}${Environment}LinuxRuleSet"
+
+        - Name: AWS-AWSManagedRulesSQLiRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${ProjectName}${Environment}SQLiRuleSet"
+
+        - Name: AWS-AWSManagedRulesAmazonIpReputationList
+          Priority: 4
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "${ProjectName}${Environment}IpReputationList"
+
+      Tags:
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+
+  WebAclArn:
+    Description: >-
+      Web ACL ARN. Copy this value into the CloudFront stack's WebAclArn
+      parameter and run a stack update on 03-cloudfront.yaml to attach it.
+      Deliberately NOT exported, so this stack can be deleted independently
+      without CloudFormation blocking on cross-stack references.
+    Value: !GetAtt WebACL.Arn
+
+  WebAclId:
+    Description: Web ACL ID
+    Value: !Ref WebACL
+
+  WebAclName:
+    Description: Web ACL Name
+    Value: !Ref WebACL

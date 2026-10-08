@@ -1,0 +1,267 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  Personal W2P Japan Lab - CloudFront Stack.
+  Creates a CloudFront Distribution using a CloudFront VPC Origin
+  pointing to the private EC2 instance created by the Compute Stack.
+
+Metadata:
+
+  AWS::CloudFormation::Interface:
+
+    ParameterGroups:
+
+      - Label:
+          default: Existing Stacks
+
+        Parameters:
+          - ComputeStackName
+
+      - Label:
+          default: WAF (Optional)
+
+        Parameters:
+          - WebAclArn
+
+      - Label:
+          default: Deployment Tags
+
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+
+    ParameterLabels:
+
+      ComputeStackName:
+        default: Compute Stack Name
+
+      WebAclArn:
+        default: WAF Web ACL ARN (optional)
+
+      ProjectName:
+        default: Project Name
+
+      Environment:
+        default: Environment
+
+      Owner:
+        default: Owner
+
+Parameters:
+
+  ComputeStackName:
+    Type: String
+    Description: Name of the Compute Stack.
+
+  WebAclArn:
+    Type: String
+    Default: ''
+    Description: >-
+      ARN of a WAFv2 Web ACL (Scope=CLOUDFRONT, created in us-east-1) to
+      associate with this distribution. Leave blank for no WAF. This is a
+      plain parameter (not a cross-stack Fn::ImportValue) on purpose - it
+      keeps this stack fully independent of the WAF stack's lifecycle.
+      Deleting the WAF stack never affects this distribution; to detach,
+      update this stack with WebAclArn set back to blank.
+
+  ProjectName:
+    Type: String
+    Description: Project Name.
+
+  Environment:
+    Type: String
+
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+
+    Description: Deployment Environment.
+
+  Owner:
+    Type: String
+    Description: Resource Owner.
+Mappings:
+
+  CloudFrontManagedPolicies:
+
+    Cache:
+
+      CachingOptimized: "658327ea-f89d-4fab-a63d-7e88639e58f6"
+
+      CachingDisabled: "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+
+    OriginRequest:
+
+      AllViewer: "216adef6-5c7f-47e4-b989-5492eafa07d3"
+
+      AllViewerExceptHostHeader: "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+
+Conditions:
+
+  HasWebAcl: !Not [!Equals [!Ref WebAclArn, '']]
+
+Resources:
+
+#################################################
+# CloudFront VPC Origin
+# Creates the ENI-based path into the VPC that
+# targets the private EC2 instance directly.
+# No public IP or public origin is ever created.
+#################################################
+
+  Ec2VpcOrigin:
+
+    Type: AWS::CloudFront::VpcOrigin
+
+    Properties:
+
+      VpcOriginEndpointConfig:
+
+        Name: !Sub "${AWS::StackName}-ec2-vpc-origin"
+
+        Arn:
+          Fn::ImportValue:
+            !Sub "${ComputeStackName}-Ec2Arn"
+
+        HTTPPort: 80
+
+        HTTPSPort: 443
+
+        OriginProtocolPolicy: http-only
+
+        OriginSSLProtocols:
+          - TLSv1.2
+
+      Tags:
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+#################################################
+# CloudFront Distribution
+# Default *.cloudfront.net domain, single default
+# cache behavior, VPC Origin as the only origin.
+#################################################
+
+  Distribution:
+
+    Type: AWS::CloudFront::Distribution
+
+    Properties:
+
+      DistributionConfig:
+
+        Enabled: true
+
+        Comment: !Sub "${AWS::StackName} -> Private EC2 via CloudFront VPC Origin"
+
+        PriceClass: PriceClass_200
+
+        HttpVersion: http2and3
+
+        IPV6Enabled: false
+
+        WebACLId: !If [HasWebAcl, !Ref WebAclArn, !Ref "AWS::NoValue"]
+
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+        Origins:
+
+          - Id: Ec2VpcOrigin
+
+            DomainName:
+              Fn::ImportValue:
+                !Sub "${ComputeStackName}-PrivateDnsName"
+
+            VpcOriginConfig:
+
+              VpcOriginId: !GetAtt Ec2VpcOrigin.Id
+
+              OriginReadTimeout: 30
+
+              OriginKeepaliveTimeout: 5
+
+        DefaultCacheBehavior:
+
+          TargetOriginId: Ec2VpcOrigin
+
+          ViewerProtocolPolicy: redirect-to-https
+
+          Compress: true
+
+          AllowedMethods:
+            - GET
+            - HEAD
+            - DELETE
+            - POST
+            - OPTIONS
+            - PUT
+            - PATCH
+
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+
+          CachePolicyId: !FindInMap [CloudFrontManagedPolicies, Cache, CachingDisabled]
+
+          OriginRequestPolicyId: !FindInMap [CloudFrontManagedPolicies, OriginRequest, AllViewer]
+
+      Tags:
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+
+  VpcOriginId:
+
+    Description: CloudFront VPC Origin ID
+
+    Value: !GetAtt Ec2VpcOrigin.Id
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-VpcOriginId"
+
+  DistributionId:
+
+    Description: CloudFront Distribution ID
+
+    Value: !Ref Distribution
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-DistributionId"
+
+  DistributionDomainName:
+
+    Description: CloudFront distribution domain name (*.cloudfront.net)
+
+    Value: !GetAtt Distribution.DomainName
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-DistributionDomainName"

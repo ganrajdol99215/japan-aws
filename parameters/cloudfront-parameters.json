@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey": "ComputeStackName",
+    "ParameterValue": "w2p-lab-compute"
+  },
+  {
+    "ParameterKey": "WebAclArn",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "W2P-Japan-Lab"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "Owner",
+    "ParameterValue": "Ganraj"
+  }
+]

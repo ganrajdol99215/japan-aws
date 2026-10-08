@@ -1,0 +1,34 @@
+[
+  {
+    "ParameterKey": "ComputeStackName",
+    "ParameterValue": "w2p-lab-compute"
+  },
+  {
+    "ParameterKey": "BackupScheduleCron",
+    "ParameterValue": "cron(0 15 ? * SUN *)"
+  },
+  {
+    "ParameterKey": "RetentionDays",
+    "ParameterValue": "30"
+  },
+  {
+    "ParameterKey": "StartWindowMinutes",
+    "ParameterValue": "60"
+  },
+  {
+    "ParameterKey": "CompletionWindowMinutes",
+    "ParameterValue": "180"
+  },
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "W2P-Japan-Lab"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "Owner",
+    "ParameterValue": "Ganraj"
+  }
+]

@@ -1,0 +1,686 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  W2P Japan - Compute Stack.
+  Creates a private EC2 instance with SSM access in the private subnet
+  created by the Network stack.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+
+    ParameterGroups:
+
+      - Label:
+          default: Network
+
+        Parameters:
+          - NetworkStackName
+
+      - Label:
+          default: EC2 Configuration
+
+        Parameters:
+          - AmiId
+          - InstanceType
+          - KeyPairName
+          - RootVolumeSize
+
+      - Label:
+          default: CloudFront VPC Origin Access
+
+        Parameters:
+          - CloudFrontOriginFacingPrefixListId
+
+      - Label:
+          default: CloudWatch Alarms & Notifications
+
+        Parameters:
+          - CpuAlarmThreshold
+          - MemoryAlarmThreshold
+          - DiskAlarmThreshold
+          - SnsTopicArnIfisW2pDev
+          - SnsTopicArnCnwMsp
+
+      - Label:
+          default: Tags
+
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+
+Parameters:
+
+  NetworkStackName:
+    Type: String
+    Description: Name of the deployed Network stack.
+
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Amazon Linux 2023 AMI ID.
+
+  InstanceType:
+    Type: String
+    Default: t3a.small
+
+    AllowedValues:
+      - t3.small
+      - t3a.small
+      - t3.medium
+      - t3a.medium
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 Key Pair.
+  InstanceName:
+    Type: String
+    Description: EC2 Name tag.
+
+  RootVolumeSize:
+    Type: Number
+    Default: 20
+
+  CloudFrontOriginFacingPrefixListId:
+    Type: String
+    AllowedPattern: ^pl-[0-9a-z]+$
+    ConstraintDescription: Must be a valid prefix list ID, e.g. pl-xxxxxxxx
+    Description: >-
+      AWS-managed prefix list ID for "com.amazonaws.global.cloudfront.origin-facing".
+      Retrieve it with:
+      aws ec2 describe-managed-prefix-lists --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing
+      This allows CloudFront's VPC Origin ENIs to reach the private EC2 instance.
+      Only adds a rule to the NEW security group created by this stack -
+      no existing production security group is touched.
+
+  ProjectName:
+    Type: String
+
+  Environment:
+    Type: String
+
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+
+  Owner:
+    Type: String
+
+  CpuAlarmThreshold:
+    Type: Number
+    Default: 80
+    Description: CPUUtilization percent threshold (Average, 3 x 5-min periods) that triggers ALARM.
+
+  MemoryAlarmThreshold:
+    Type: Number
+    Default: 85
+    Description: mem_used_percent threshold (Average, 3 x 5-min periods, from CloudWatch Agent) that triggers ALARM.
+
+  DiskAlarmThreshold:
+    Type: Number
+    Default: 85
+    Description: disk_used_percent threshold on root volume "/" (Average, 3 x 5-min periods, from CloudWatch Agent) that triggers ALARM.
+
+  SnsTopicArnIfisW2pDev:
+    Type: String
+    Description: >-
+      Existing SNS topic ARN "ifis_w2p-dev". Not created by this stack -
+      confirm/override if this topic lives in a different account or region.
+
+  SnsTopicArnCnwMsp:
+    Type: String
+    Description: >-
+      Existing SNS topic ARN "cnw_msp". Not created by this stack -
+      confirm/override if this topic lives in a different account or region.
+
+Resources:
+
+#################################################
+# IAM Role
+#################################################
+
+  Ec2Role:
+
+    Type: AWS::IAM::Role
+
+    Properties:
+
+      AssumeRolePolicyDocument:
+
+        Version: "2012-10-17"
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+
+              Service:
+                - ec2.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+
+      Tags:
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+#################################################
+# Instance Profile
+#################################################
+
+  Ec2InstanceProfile:
+
+    Type: AWS::IAM::InstanceProfile
+
+    Properties:
+
+      Roles:
+
+        - !Ref Ec2Role
+
+#################################################
+# Security Group
+#################################################
+
+  Ec2SecurityGroup:
+
+    Type: AWS::EC2::SecurityGroup
+
+    Properties:
+
+      GroupDescription: Security Group for Private EC2
+
+      VpcId:
+        Fn::ImportValue:
+          !Sub "${NetworkStackName}-VpcId"
+
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+
+          FromPort: 80
+
+          ToPort: 80
+
+          CidrIp:
+            Fn::ImportValue:
+              !Sub "${NetworkStackName}-VpcCidr"
+
+          Description: HTTP within VPC
+
+        - IpProtocol: tcp
+
+          FromPort: 80
+
+          ToPort: 80
+
+          SourcePrefixListId: !Ref CloudFrontOriginFacingPrefixListId
+
+          Description: HTTP from CloudFront VPC Origin (origin-facing prefix list)
+
+      SecurityGroupEgress:
+
+        - IpProtocol: -1
+
+          CidrIp: 0.0.0.0/0
+
+      Tags:
+
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-EC2-SG"
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+#################################################
+# EC2 Instance
+#################################################
+
+  Ec2Instance:
+
+    Type: AWS::EC2::Instance
+
+    Properties:
+
+      ImageId: !Ref AmiId
+
+      InstanceType: !Ref InstanceType
+
+      KeyName: !Ref KeyPairName
+      DisableApiTermination: true
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -eux
+
+          dnf update -y
+
+          timedatectl set-timezone Asia/Tokyo
+
+          dnf install -y amazon-cloudwatch-agent jq unzip wget curl
+
+          systemctl enable amazon-ssm-agent
+          systemctl start amazon-ssm-agent
+
+          systemctl enable amazon-cloudwatch-agent
+
+          mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'EOF'
+          {
+            "agent": {
+              "metrics_collection_interval": 300,
+              "run_as_user": "root"
+            },
+            "metrics": {
+              "metrics_collected": {
+                "mem": {
+                  "measurement": [
+                    "mem_used_percent"
+                  ]
+                },
+                "disk": {
+                  "measurement": [
+                    "used_percent"
+                  ],
+                  "resources": [
+                    "/"
+                  ]
+                }
+              }
+            }
+          }
+          EOF
+
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+            -a fetch-config \
+            -m ec2 \
+            -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json \
+            -s
+      SubnetId:
+
+        Fn::ImportValue:
+          !Sub "${NetworkStackName}-PrivateSubnetId"
+
+      SecurityGroupIds:
+
+        - !Ref Ec2SecurityGroup
+
+      BlockDeviceMappings:
+
+      - DeviceName: /dev/xvda
+
+        Ebs:
+
+          VolumeType: gp3
+
+          VolumeSize: !Ref RootVolumeSize
+
+          Encrypted: true
+
+          DeleteOnTermination: true
+
+      Tags:
+
+        - Key: Name
+          Value: !Ref InstanceName
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+#################################################
+# CloudWatch Alarms
+# All 5 alarms notify both SNS topics on every
+# state transition: ALARM, OK, and INSUFFICIENT_DATA
+# (matches existing customer notification pattern).
+#################################################
+
+  HighCpuUtilizationAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName: !Sub "${AWS::StackName}-HighCPUUtilization"
+
+      AlarmDescription: !Sub "CPUUtilization on ${InstanceName} exceeded ${CpuAlarmThreshold}% (avg over 3 x 5min)"
+
+      Namespace: AWS/EC2
+
+      MetricName: CPUUtilization
+
+      Dimensions:
+
+        - Name: InstanceId
+          Value: !Ref Ec2Instance
+
+      Statistic: Average
+
+      Period: 300
+
+      EvaluationPeriods: 3
+
+      Threshold: !Ref CpuAlarmThreshold
+
+      ComparisonOperator: GreaterThanThreshold
+
+      TreatMissingData: missing
+
+      AlarmActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      OKActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      InsufficientDataActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+  StatusCheckFailedSystemAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName: !Sub "${AWS::StackName}-StatusCheckFailed-System"
+
+      AlarmDescription: !Sub "System status check failed on ${InstanceName} (underlying AWS hardware/network issue)"
+
+      Namespace: AWS/EC2
+
+      MetricName: StatusCheckFailed_System
+
+      Dimensions:
+
+        - Name: InstanceId
+          Value: !Ref Ec2Instance
+
+      Statistic: Maximum
+
+      Period: 60
+
+      EvaluationPeriods: 2
+
+      Threshold: 0
+
+      ComparisonOperator: GreaterThanThreshold
+
+      TreatMissingData: missing
+
+      AlarmActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      OKActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      InsufficientDataActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+  StatusCheckFailedInstanceAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName: !Sub "${AWS::StackName}-StatusCheckFailed-Instance"
+
+      AlarmDescription: !Sub "Instance status check failed on ${InstanceName} (OS-level issue, often needs a reboot)"
+
+      Namespace: AWS/EC2
+
+      MetricName: StatusCheckFailed_Instance
+
+      Dimensions:
+
+        - Name: InstanceId
+          Value: !Ref Ec2Instance
+
+      Statistic: Maximum
+
+      Period: 60
+
+      EvaluationPeriods: 2
+
+      Threshold: 0
+
+      ComparisonOperator: GreaterThanThreshold
+
+      TreatMissingData: missing
+
+      AlarmActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      OKActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      InsufficientDataActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+  HighMemoryUsedAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName: !Sub "${AWS::StackName}-HighMemoryUsedPercent"
+
+      AlarmDescription: !Sub "mem_used_percent on ${InstanceName} exceeded ${MemoryAlarmThreshold}% (avg over 3 x 5min, via CloudWatch Agent)"
+
+      Namespace: CWAgent
+
+      MetricName: mem_used_percent
+
+      Dimensions:
+
+        - Name: InstanceId
+          Value: !Ref Ec2Instance
+
+      Statistic: Average
+
+      Period: 300
+
+      EvaluationPeriods: 3
+
+      Threshold: !Ref MemoryAlarmThreshold
+
+      ComparisonOperator: GreaterThanThreshold
+
+      TreatMissingData: missing
+
+      AlarmActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      OKActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      InsufficientDataActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+  HighDiskUsedAlarm:
+
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName: !Sub "${AWS::StackName}-HighDiskUsedPercent"
+
+      AlarmDescription: !Sub "disk_used_percent on ${InstanceName} exceeded ${DiskAlarmThreshold}% on / (avg over 3 x 5min, via CloudWatch Agent)"
+
+      Namespace: CWAgent
+
+      MetricName: disk_used_percent
+
+      Dimensions:
+
+        - Name: InstanceId
+          Value: !Ref Ec2Instance
+
+        - Name: path
+          Value: /
+
+      Statistic: Average
+
+      Period: 300
+
+      EvaluationPeriods: 3
+
+      Threshold: !Ref DiskAlarmThreshold
+
+      ComparisonOperator: GreaterThanThreshold
+
+      TreatMissingData: missing
+
+      AlarmActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      OKActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+      InsufficientDataActions:
+        - !Ref SnsTopicArnIfisW2pDev
+        - !Ref SnsTopicArnCnwMsp
+
+#################################################
+# Outputs
+#################################################
+
+Outputs:
+
+  Ec2InstanceId:
+
+    Description: EC2 Instance ID
+
+    Value: !Ref Ec2Instance
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-Ec2InstanceId"
+
+  PrivateIp:
+
+    Description: Private IP Address
+
+    Value: !GetAtt Ec2Instance.PrivateIp
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-PrivateIp"
+
+  SecurityGroupId:
+
+    Description: EC2 Security Group
+
+    Value: !Ref Ec2SecurityGroup
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-SecurityGroupId"
+
+  InstanceProfile:
+
+    Description: EC2 Instance Profile
+
+    Value: !Ref Ec2InstanceProfile
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-InstanceProfile"
+
+  RoleArn:
+
+    Description: EC2 IAM Role ARN
+
+    Value: !GetAtt Ec2Role.Arn
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-RoleArn"
+
+  PrivateDnsName:
+
+    Description: EC2 Private DNS
+
+    Value: !GetAtt Ec2Instance.PrivateDnsName
+
+    Export:
+
+      Name: !Sub "${AWS::StackName}-PrivateDnsName"
+  Ec2Arn:
+    Description: EC2 ARN
+    Value: !Sub
+      - arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}
+      - InstanceId: !Ref Ec2Instance
+    Export:
+      Name: !Sub "${AWS::StackName}-Ec2Arn"
+
+  HighCpuUtilizationAlarmArn:
+    Description: CPUUtilization alarm ARN
+    Value: !GetAtt HighCpuUtilizationAlarm.Arn
+
+  StatusCheckFailedSystemAlarmArn:
+    Description: System status check alarm ARN
+    Value: !GetAtt StatusCheckFailedSystemAlarm.Arn
+
+  StatusCheckFailedInstanceAlarmArn:
+    Description: Instance status check alarm ARN
+    Value: !GetAtt StatusCheckFailedInstanceAlarm.Arn
+
+  HighMemoryUsedAlarmArn:
+    Description: mem_used_percent alarm ARN
+    Value: !GetAtt HighMemoryUsedAlarm.Arn
+
+  HighDiskUsedAlarmArn:
+    Description: disk_used_percent alarm ARN
+    Value: !GetAtt HighDiskUsedAlarm.Arn

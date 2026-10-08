@@ -1,0 +1,62 @@
+[
+  {
+    "ParameterKey": "NetworkStackName",
+    "ParameterValue": "w2p-lab-network"
+  },
+  {
+    "ParameterKey": "AmiId",
+    "ParameterValue": "REPLACE_WITH_AL2023_AMI_ID_IN_SELECTED_REGION"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t3.small"
+  },
+  {
+    "ParameterKey": "KeyPairName",
+    "ParameterValue": "REPLACE_WITH_YOUR_KEY_PAIR"
+  },
+  {
+    "ParameterKey": "RootVolumeSize",
+    "ParameterValue": "20"
+  },
+  {
+    "ParameterKey": "CloudFrontOriginFacingPrefixListId",
+    "ParameterValue": "REPLACE_WITH_CLOUDFRONT_ORIGIN_FACING_PREFIX_LIST_ID"
+  },
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "W2P-Japan-Lab"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "Owner",
+    "ParameterValue": "Ganraj"
+  },
+  {
+    "ParameterKey": "InstanceName",
+    "ParameterValue": "w2p-japan-lab-01"
+  },
+  {
+    "ParameterKey": "CpuAlarmThreshold",
+    "ParameterValue": "80"
+  },
+  {
+    "ParameterKey": "MemoryAlarmThreshold",
+    "ParameterValue": "85"
+  },
+  {
+    "ParameterKey": "DiskAlarmThreshold",
+    "ParameterValue": "85"
+  },
+  {
+    "ParameterKey": "SnsTopicArnIfisW2pDev",
+    "ParameterValue": "REPLACE_WITH_FOUNDATION_ALERT_TOPIC_ARN"
+  },
+  {
+    "ParameterKey": "SnsTopicArnCnwMsp",
+    "ParameterValue": "REPLACE_WITH_FOUNDATION_OPS_TOPIC_ARN"
+  }
+]

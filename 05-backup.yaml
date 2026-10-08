@@ -1,0 +1,231 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  Personal W2P Japan Lab - Backup Stack.
+  Creates an AWS Backup vault + plan that backs up the private EC2 instance
+  (and its attached EBS volume) once a week, retaining each recovery point
+  for 30 days. Deliberately a standalone stack so its lifecycle (backup
+  history, retention) is independent of the compute stack.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Existing Stacks
+        Parameters:
+          - ComputeStackName
+
+      - Label:
+          default: Backup Schedule & Retention
+        Parameters:
+          - BackupScheduleCron
+          - RetentionDays
+          - StartWindowMinutes
+          - CompletionWindowMinutes
+
+      - Label:
+          default: Tags
+        Parameters:
+          - ProjectName
+          - Environment
+          - Owner
+
+    ParameterLabels:
+      ComputeStackName:
+        default: Compute Stack Name
+      BackupScheduleCron:
+        default: Backup Schedule (cron, UTC)
+      RetentionDays:
+        default: Retention (days)
+
+Parameters:
+
+  ComputeStackName:
+    Type: String
+    Description: Name of the deployed Compute stack (used to import the EC2 instance ARN).
+
+  BackupScheduleCron:
+    Type: String
+    Default: cron(0 15 ? * SUN *)
+    Description: >-
+      AWS Backup schedule expression, in UTC. Default runs 15:00 UTC every
+      Sunday = 00:00 JST Monday (low-traffic window). Adjust if a different
+      day/time is preferred.
+
+  RetentionDays:
+    Type: Number
+    Default: 30
+    Description: Number of days to retain each weekly recovery point (client requested 1 month).
+
+  StartWindowMinutes:
+    Type: Number
+    Default: 60
+    Description: Minutes AWS Backup will wait for the backup job to start before it's considered failed.
+
+  CompletionWindowMinutes:
+    Type: Number
+    Default: 180
+    Description: Minutes AWS Backup will wait for the backup job to finish before it's considered failed.
+
+  ProjectName:
+    Type: String
+    Description: Project name used for resource tagging.
+
+  Environment:
+    Type: String
+    AllowedValues:
+      - dev
+      - test
+      - uat
+      - prod
+    Description: Deployment environment.
+
+  Owner:
+    Type: String
+    Description: Resource owner.
+
+Resources:
+
+  ##############################################
+  # Backup Vault
+  ##############################################
+
+  BackupVault:
+
+    Type: AWS::Backup::BackupVault
+
+    DeletionPolicy: Retain
+
+    UpdateReplacePolicy: Retain
+
+    Properties:
+
+      BackupVaultName: !Sub "${ProjectName}-${Environment}-vault"
+
+      BackupVaultTags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+        Owner: !Ref Owner
+        ManagedBy: CloudFormation
+
+  ##############################################
+  # IAM Role for AWS Backup service
+  ##############################################
+
+  BackupRole:
+
+    Type: AWS::IAM::Role
+
+    Properties:
+
+      AssumeRolePolicyDocument:
+
+        Version: "2012-10-17"
+
+        Statement:
+
+          - Effect: Allow
+
+            Principal:
+
+              Service:
+                - backup.amazonaws.com
+
+            Action:
+              - sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+
+      Tags:
+
+        - Key: Project
+          Value: !Ref ProjectName
+
+        - Key: Environment
+          Value: !Ref Environment
+
+        - Key: Owner
+          Value: !Ref Owner
+
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  ##############################################
+  # Backup Plan - weekly, 30-day retention
+  ##############################################
+
+  BackupPlan:
+
+    Type: AWS::Backup::BackupPlan
+
+    Properties:
+
+      BackupPlan:
+
+        BackupPlanName: !Sub "${ProjectName}-${Environment}-weekly-backup-plan"
+
+        BackupPlanRule:
+
+          - RuleName: WeeklyBackup
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: !Ref BackupScheduleCron
+            StartWindowMinutes: !Ref StartWindowMinutes
+            CompletionWindowMinutes: !Ref CompletionWindowMinutes
+            Lifecycle:
+              DeleteAfterDays: !Ref RetentionDays
+
+      BackupPlanTags:
+        Project: !Ref ProjectName
+        Environment: !Ref Environment
+        Owner: !Ref Owner
+        ManagedBy: CloudFormation
+
+  ##############################################
+  # Backup Selection - targets the EC2 instance
+  # created by the Compute stack
+  ##############################################
+
+  BackupSelection:
+
+    Type: AWS::Backup::BackupSelection
+
+    Properties:
+
+      BackupPlanId: !Ref BackupPlan
+
+      BackupSelection:
+
+        SelectionName: !Sub "${ProjectName}-${Environment}-ec2-selection"
+
+        IamRoleArn: !GetAtt BackupRole.Arn
+
+        Resources:
+          - Fn::ImportValue:
+              !Sub "${ComputeStackName}-Ec2Arn"
+
+Outputs:
+
+  BackupVaultName:
+    Description: AWS Backup vault name
+    Value: !Ref BackupVault
+
+  BackupVaultArn:
+    Description: AWS Backup vault ARN
+    Value: !GetAtt BackupVault.BackupVaultArn
+
+  BackupPlanId:
+    Description: AWS Backup plan ID
+    Value: !Ref BackupPlan
+
+  BackupPlanArn:
+    Description: AWS Backup plan ARN
+    Value: !GetAtt BackupPlan.BackupPlanArn
+
+  BackupSelectionId:
+    Description: AWS Backup selection ID
+    Value: !GetAtt BackupSelection.SelectionId
+
+  BackupRoleArn:
+    Description: IAM role ARN used by AWS Backup
+    Value: !GetAtt BackupRole.Arn

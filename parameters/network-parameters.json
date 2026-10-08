@@ -1,0 +1,38 @@
+[
+  {
+    "ParameterKey": "ExistingVpcId",
+    "ParameterValue": "REPLACE_WITH_FOUNDATION_VPC_ID"
+  },
+  {
+    "ParameterKey": "ExistingPublicSubnetId",
+    "ParameterValue": "REPLACE_WITH_FOUNDATION_PUBLIC_SUBNET_ID"
+  },
+  {
+    "ParameterKey": "AvailabilityZone",
+    "ParameterValue": "ap-northeast-1a"
+  },
+  {
+    "ParameterKey": "VpcCidr",
+    "ParameterValue": "10.20.0.0/16"
+  },
+  {
+    "ParameterKey": "PrivateSubnetCidr",
+    "ParameterValue": "10.20.2.0/24"
+  },
+  {
+    "ParameterKey": "EnableNatGateway",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "W2P-Japan-Lab"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "Owner",
+    "ParameterValue": "Ganraj"
+  }
+]
