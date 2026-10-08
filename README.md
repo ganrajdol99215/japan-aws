@@ -1,6 +1,6 @@
 # W2P Japan - Personal AWS Replica Lab
 
-This package is a sanitized, deployable learning replica based on the uploaded W2P Japan CloudFormation templates. It is **not** the client environment and contains no client account IDs, resource IDs, domains, or SNS ARNs.
+This package is a sanitized, deployable learning replica based on the uploaded  Japan CloudFormation templates. It is **not** the client environment and contains no client account IDs, resource IDs, domains, or SNS ARNs.
 
 ## Important architecture note
 The original client had some resources already existing outside these CloudFormation stacks: the VPC/public subnet, Route 53, and ACM were not created by Siva's five templates. The lab therefore adds `00-foundation.yaml` only to create a personal VPC/public subnet and two SNS topics so the rest can be deployed from scratch. Route 53 and ACM remain outside the five-stack replica, matching the client's separation.
